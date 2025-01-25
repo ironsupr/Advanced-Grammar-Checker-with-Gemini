@@ -29,8 +29,8 @@ This application is a desktop tool that leverages Google's Gemini Pro model for 
 1.  **Clone the Repository:**
 
     ```bash
-    git clone https://github.com/ironsupr/English-Correction.git
-    cd English-Correction
+    git clone https://github.com/ironsupr/Advanced-Grammar-Checker-with-Gemini.git
+    cd Advanced-Grammar-Checker-with-Gemini
     ```
 
 2.  **Install Required Libraries:**

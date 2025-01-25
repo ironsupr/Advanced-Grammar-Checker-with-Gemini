@@ -1,11 +1,12 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext, simpledialog
+from tkinter import ttk, scrolledtext, simpledialog, messagebox
 import speech_recognition as sr
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 import threading
 import queue
+import time
 
 load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
@@ -16,7 +17,7 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # Initialize Gemini model
-model = genai.GenerativeModel('gemini-pro')
+MODEL = genai.GenerativeModel('gemini-pro')
 
 # Language Codes Mapping
 LANGUAGES = {
@@ -39,71 +40,91 @@ LANGUAGES = {
     'vi-VN': 'Vietnamese (Vietnam)'
 }
 
+DEFAULT_PROMPT = "Correct the following text for grammar and spelling errors in {language}. Provide detailed feedback. If there are no errors return text as is: {text}"
+
+
 class GrammarCheckerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Advanced Grammar Checker with Gemini")
 
         # UI Elements
-        self.create_ui()
+        self.language_frame = self.create_language_section()
+        self.text_input_frame = self.create_text_input_section()
+        self.audio_frame = self.create_audio_section()
+        self.display_frame = self.create_display_section()
 
         self.recognizer = sr.Recognizer()
         self.is_recording = False
-        self.audio_queue = queue.Queue()
+        self.audio_settings = {}
+        self.custom_prompt = DEFAULT_PROMPT
 
 
-    def create_ui(self):
-        # Language Selection
-        self.language_label = ttk.Label(self.root, text="Select Language:")
-        self.language_label.pack(pady=5)
+    def create_language_section(self):
+        language_frame = ttk.Frame(self.root)
+        language_frame.pack(pady=5)
+
+        language_label = ttk.Label(language_frame, text="Select Language:")
+        language_label.pack(side="left", padx=5)
 
         self.language_var = tk.StringVar(value='en-US')
-        self.language_dropdown = ttk.Combobox(self.root, textvariable=self.language_var, values=list(LANGUAGES.keys()))
-        self.language_dropdown.pack(pady=5)
+        self.language_dropdown = ttk.Combobox(language_frame, textvariable=self.language_var, values=list(LANGUAGES.keys()))
+        self.language_dropdown.pack(side="left", padx=5)
         self.language_dropdown.config(width=20)
-
         self.language_dropdown.bind("<<ComboboxSelected>>", self.update_language_description)
-        self.language_description = ttk.Label(self.root, text=LANGUAGES['en-US'])
-        self.language_description.pack(pady=5)
-        
-        # Audio Settings Button
-        self.audio_settings_button = ttk.Button(self.root, text="Audio Settings", command=self.open_audio_settings)
-        self.audio_settings_button.pack(pady=5)
+       
+        self.language_description = ttk.Label(language_frame, text=LANGUAGES['en-US'])
+        self.language_description.pack(side="left", padx=5)
+        return language_frame
+    
+    def create_text_input_section(self):
+        text_input_frame = ttk.Frame(self.root)
+        text_input_frame.pack(pady=5)
 
+        self.text_input_button = ttk.Button(text_input_frame, text="Enter Text", command=self.enter_text)
+        self.text_input_button.pack(side="left", padx=5)
+        return text_input_frame
 
-        # Text Input Option
-        self.text_input_button = ttk.Button(self.root, text="Enter Text", command=self.enter_text)
-        self.text_input_button.pack(pady=5)
+    def create_audio_section(self):
+        audio_frame = ttk.Frame(self.root)
+        audio_frame.pack(pady=5)
 
-        # Recording Button
-        self.record_button = ttk.Button(self.root, text="Start Recording", command=self.toggle_recording)
-        self.record_button.pack(pady=10)
-        
+        self.audio_settings_button = ttk.Button(audio_frame, text="Audio Settings", command=self.open_audio_settings)
+        self.audio_settings_button.pack(side="left", padx=5)
+
+        self.record_button = ttk.Button(audio_frame, text="Start Recording", command=self.toggle_recording)
+        self.record_button.pack(side="left", padx=5)
+        return audio_frame
+    
+    def create_display_section(self):
+        display_frame = ttk.Frame(self.root)
+        display_frame.pack(pady=5)
+
         # Transcription Display
-        self.transcript_label = ttk.Label(self.root, text="Transcribed Text:")
-        self.transcript_label.pack(pady=5)
+        transcript_label = ttk.Label(display_frame, text="Transcribed Text:")
+        transcript_label.pack(pady=5)
 
-        self.transcript_text = scrolledtext.ScrolledText(self.root, height=5, width=60, wrap="word")
-        self.transcript_text.pack(pady=5)
-        self.transcript_text.config(state='disabled')
+        self.transcript_display = scrolledtext.ScrolledText(display_frame, height=5, width=60, wrap="word")
+        self.transcript_display.pack(pady=5)
+        self.transcript_display.config(state='disabled')
 
         # Correction & Feedback Display
-        self.correction_label = ttk.Label(self.root, text="Corrected Text & Feedback:")
-        self.correction_label.pack(pady=5)
+        correction_label = ttk.Label(display_frame, text="Corrected Text & Feedback:")
+        correction_label.pack(pady=5)
 
-        self.correction_text = scrolledtext.ScrolledText(self.root, height=10, width=60, wrap="word")
-        self.correction_text.pack(pady=5)
-        self.correction_text.config(state='disabled')
+        self.corrected_text_display = scrolledtext.ScrolledText(display_frame, height=10, width=60, wrap="word")
+        self.corrected_text_display.pack(pady=5)
+        self.corrected_text_display.config(state='disabled')
         
          # Gemini Prompt Customization
-        self.prompt_button = ttk.Button(self.root, text="Customize Prompt", command=self.customize_prompt)
-        self.prompt_button.pack(pady=5)
-        self.custom_prompt = "Correct the following text for grammar and spelling errors in {language}. Provide detailed feedback. If there are no errors return text as is: {text}"
+        prompt_button = ttk.Button(display_frame, text="Customize Prompt", command=self.customize_prompt)
+        prompt_button.pack(pady=5)
 
         # Status Label
-        self.status_label = ttk.Label(self.root, text="")
+        self.status_label = ttk.Label(display_frame, text="")
         self.status_label.pack(pady=5)
         
+        return display_frame
     
     def update_language_description(self, event):
             selected_code = self.language_var.get()
@@ -113,7 +134,7 @@ class GrammarCheckerApp:
         # Placeholder for future audio parameter adjustment dialog
         settings_window = tk.Toplevel(self.root)
         settings_window.title("Audio Settings")
-
+        
         # Sample slider to select the recording duration
         duration_label = ttk.Label(settings_window, text="Recording Duration:")
         duration_label.grid(row=0, column=0, padx=5, pady=5)
@@ -139,12 +160,12 @@ class GrammarCheckerApp:
     def enter_text(self):
         text = simpledialog.askstring("Input Text", "Enter text to check:")
         if text:
-            self.transcript_text.config(state='normal')
-            self.transcript_text.delete(1.0, tk.END)
-            self.transcript_text.insert(tk.END, text)
-            self.transcript_text.config(state='disabled')
+            self.transcript_display.config(state='normal')
+            self.transcript_display.delete(1.0, tk.END)
+            self.transcript_display.insert(tk.END, text)
+            self.transcript_display.config(state='disabled')
             self.status_label.config(text="Processing...")
-            self.check_grammar(text, self.language_var.get())
+            self.process_text_for_correction(text, self.language_var.get())
     
     def toggle_recording(self):
         if not self.is_recording:
@@ -156,15 +177,14 @@ class GrammarCheckerApp:
             self.is_recording = True
             self.record_button.config(text="Stop Recording")
             self.status_label.config(text="Recording...")
-            self.transcript_text.config(state='normal')
-            self.transcript_text.delete(1.0, tk.END)
-            self.transcript_text.config(state='disabled')
-            self.correction_text.config(state='normal')
-            self.correction_text.delete(1.0, tk.END)
-            self.correction_text.config(state='disabled')
+            self.transcript_display.config(state='normal')
+            self.transcript_display.delete(1.0, tk.END)
+            self.transcript_display.config(state='disabled')
+            self.corrected_text_display.config(state='normal')
+            self.corrected_text_display.delete(1.0, tk.END)
+            self.corrected_text_display.config(state='disabled')
 
             language = self.language_var.get()
-            self.audio_queue.queue.clear() # clear previous audio segments
             self.recording_thread = threading.Thread(target=self.record_audio_stream, args=(language,))
             self.recording_thread.start()
 
@@ -177,8 +197,7 @@ class GrammarCheckerApp:
                 while self.is_recording:
                     try:
                          audio = self.recognizer.listen(source, phrase_time_limit=3) #Limit phrases to 3 seconds
-                         self.audio_queue.put((audio, language))
-                         threading.Thread(target=self.process_audio, args=(audio, language), daemon=True).start()
+                         self.process_audio(audio, language)
                     except sr.WaitTimeoutError:
                         pass
         except Exception as e:
@@ -196,10 +215,10 @@ class GrammarCheckerApp:
              self.status_label.config(text=f"An unexpected error occured: {e}")
 
     def update_transcript(self, text):
-            self.transcript_text.config(state='normal')
-            self.transcript_text.insert(tk.END, " "+text)
-            self.transcript_text.config(state='disabled')
-            self.check_grammar(text, self.language_var.get(), append=True)
+            self.transcript_display.config(state='normal')
+            self.transcript_display.insert(tk.END, " "+text)
+            self.transcript_display.config(state='disabled')
+            self.process_text_for_correction(text, self.language_var.get(), append=True)
 
 
     def stop_recording(self):
@@ -211,32 +230,42 @@ class GrammarCheckerApp:
         self.status_label.config(text="Done")
 
 
-    def check_grammar(self, text, language, append=False):
+    def process_text_for_correction(self, text, language, append=False):
         prompt = self.custom_prompt.format(language=language, text=text)
-        try:
-            response = model.generate_content(prompt)
-            corrected_text = response.text
-            self.update_correction_text(corrected_text, append)
+        
+        # Separate thread for Gemini processing to keep UI responsive
+        threading.Thread(target=self._run_gemini_request, args=(prompt, append), daemon=True).start()
 
-        except Exception as e:
-            self.status_label.config(text=f"Error checking grammar: {e}")
-            self.update_correction_text("Could not process with Gemini. See the error message above.", append)
+    def _run_gemini_request(self, prompt, append):
+            try:
+                response = MODEL.generate_content(prompt)
+                corrected_text = response.text
+                self.root.after(0, self.update_correction_text, corrected_text, append)  # Update UI on main thread
+
+            except Exception as e:
+               error_message = f"Error checking grammar: {e}"
+               self.root.after(0, self.status_label.config, {"text": error_message})
+               self.root.after(0, self.update_correction_text, "Could not process with Gemini. See the error message above.", append)
 
 
     def update_correction_text(self, corrected_text, append=False):
-        self.correction_text.config(state='normal')
+        self.corrected_text_display.config(state='normal')
         if append:
-            self.correction_text.insert(tk.END,  " "+corrected_text)
+            self.corrected_text_display.insert(tk.END,  " "+corrected_text)
         else:
-           self.correction_text.delete(1.0, tk.END)
-           self.correction_text.insert(tk.END, corrected_text)
-        self.correction_text.config(state='disabled')
+           self.corrected_text_display.delete(1.0, tk.END)
+           self.corrected_text_display.insert(tk.END, corrected_text)
+        self.corrected_text_display.config(state='disabled')
     
     def customize_prompt(self):
         prompt = simpledialog.askstring("Customize Prompt", "Enter your custom prompt:", initialvalue=self.custom_prompt)
         if prompt:
            self.custom_prompt = prompt
-
+        
+        # Add reset option if wanted
+        reset = messagebox.askyesno("Reset Prompt","Do you want to reset the prompt to the default?")
+        if reset:
+            self.custom_prompt = DEFAULT_PROMPT
 
 if __name__ == "__main__":
     root = tk.Tk()
